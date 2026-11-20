@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+# data and results never go to git (licences; they live on Drive)
+data/
+runs/
+*.parquet
+# secrets
+.env
+*.env
