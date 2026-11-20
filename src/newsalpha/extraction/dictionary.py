@@ -12,6 +12,7 @@ import re
 
 import pandas as pd
 
+from newsalpha.extraction.base import ArticleText
 from newsalpha.extraction.schema import RawExtraction
 
 _BUILTIN_POS = {
@@ -54,8 +55,8 @@ class DictionaryExtractor:
     def __init__(self) -> None:
         self.pos, self.neg = _load()
 
-    def extract_one(self, headline: str, summary: str = "", body: str = "") -> RawExtraction:
-        words = _WORD.findall(f"{headline} {summary} {body}".lower())
+    def extract_one(self, item: ArticleText) -> RawExtraction:
+        words = _WORD.findall(f"{item.headline} {item.summary} {item.body}".lower())
         p = sum(w in self.pos for w in words)
         n = sum(w in self.neg for w in words)
         tone = (p - n) / (p + n + 1)

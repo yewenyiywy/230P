@@ -12,8 +12,9 @@ from newsalpha.features.panel import build_panel
 
 
 @pytest.fixture(scope="session")
-def cfg() -> RunConfig:
+def cfg(tmp_path_factory) -> RunConfig:
     c = RunConfig(name="test")
+    c.data.root = str(tmp_path_factory.mktemp("data"))
     c.data.synthetic_symbols = 8
     c.data.synthetic_sessions = 40
     c.align.delays_min = [5, 30]

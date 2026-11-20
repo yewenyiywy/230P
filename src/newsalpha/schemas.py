@@ -11,6 +11,7 @@ MINUTE_BARS    data.sources.*              (symbol, ts)  ts = minute start
 QUOTES         data.sources.*              (symbol, ts)  ts = snapshot time
 EVENTS         align.build_events          event_id
 EXTRACTIONS    extraction.*                (article_id, method)
+SIGNALS        pipeline stage 4b           event_id
 PANEL          features.panel.build_panel  (event_id, delay_min, horizon)
 PREDICTIONS    models.walk_forward         (event_id, delay_min, horizon)
 TRADES         trading.backtest            (event_id, delay_min, horizon)
@@ -74,6 +75,14 @@ EXTRACTIONS = {
     "target_change": "float64",
     "guidance_change": "float64",
 }
+
+# SIGNALS: event_id + any of these optional columns (all become PANEL features)
+SIGNALS = {"event_id": "object"}
+SIGNAL_COLUMNS = [
+    "n_prior", "max_prior_sim", "novelty", "hours_since_prior",          # T5 novelty
+    "models_n", "models_mean_score", "models_dispersion",                # T4 disagreement
+    "models_agreement", "models_conflict",
+]  # fmt: skip
 
 # PANEL: id/time columns + label columns; every other column is a feature.
 PANEL_ID_COLS = [

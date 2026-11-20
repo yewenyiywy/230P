@@ -52,6 +52,7 @@ class RawExtraction(BaseModel):
     target_new: float | None = None
     guidance_old_mid: float | None = None
     guidance_new_mid: float | None = None
+    novelty_llm: float | None = Field(default=None, ge=0, le=1)  # RAG prompt: 1 = not anticipated
     evidence: str = ""  # quoted text supporting the fields, for audits
 
 
@@ -83,4 +84,6 @@ def finalize(raw: pd.DataFrame, method: str) -> pd.DataFrame:
     out["direction"] = np.where(numeric != 0, np.sign(numeric), raw["direction"].astype(float))
     out["magnitude"] = raw["magnitude"].astype(float).values
     out["confidence"] = raw["confidence"].astype(float).values
+    if "novelty_llm" in raw:
+        out["novelty_llm"] = pd.to_numeric(raw["novelty_llm"], errors="coerce").values
     return out

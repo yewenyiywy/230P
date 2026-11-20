@@ -96,6 +96,7 @@ def build_panel(
     quotes: pd.DataFrame,
     cfg: RunConfig,
     daily_bars: pd.DataFrame | None = None,
+    signals: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """`bars` are minute bars (at least around events); `daily_bars`, if given, feed the
     20-day stats instead (one bar per session is enough), which keeps real-data pulls small."""
@@ -112,6 +113,10 @@ def build_panel(
     )
     for t in ("earnings", "analyst", "guidance"):
         ev[f"is_{t}"] = (ev["event_type"] == t).astype(float)
+    extra_cols = ["novelty_llm"] if "novelty_llm" in ev and ev["novelty_llm"].notna().any() else []
+    if signals is not None and len(signals):
+        ev = ev.merge(signals, on="event_id", how="left", validate="one_to_one")
+        extra_cols += [c for c in signals.columns if c != "event_id"]
 
     rows = []
     for d in cfg.align.delays_min:
@@ -171,5 +176,6 @@ def build_panel(
         + TEXT_FEATURES
         + ["ar_react", "pre_runup", "spread_bps_entry", "quote_imb", "vol_surge", "mom_5d"]
         + ["overnight", "horizon_days"]
+        + extra_cols
     )
     return panel[keep].reset_index(drop=True)

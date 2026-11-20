@@ -19,7 +19,8 @@ flowchart LR
         CLEAN["clean<br/>dedupe, revised bodies"]
     end
     ALIGN["3 align<br/>event minute tau<br/>point-in-time QuoteBook"]
-    EXTRACT["4 extraction<br/>rules / dictionary / LLM<br/>surprise computed in code"]
+    EXTRACT["4 extraction<br/>rules / dictionary / FinBERT<br/>LLM (+RAG) / probe<br/>surprise computed in code"]
+    SIGNALS["4b signals<br/>novelty vs prior news<br/>cross-model disagreement"]
     PANEL["5 features<br/>event x delay x horizon<br/>reaction, quotes, volume"]
     MODEL["6 models<br/>walk-forward + purge<br/>gap model per fold"]
     TRADE["7a trading<br/>edge = forecast - cost<br/>size, hedge, bid/ask fills"]
@@ -28,13 +29,17 @@ flowchart LR
     SRC -->|ARTICLES| CLEAN -->|ARTICLES| ALIGN
     SRC -->|MINUTE_BARS, QUOTES| PANEL
     CLEAN -->|ARTICLES| EXTRACT
+    CLEAN -->|ARTICLES| SIGNALS
+    SIGNALS -->|RAG context| EXTRACT
+    EXTRACT -->|EXTRACTIONS| SIGNALS
     ALIGN -->|EVENTS| PANEL
     EXTRACT -->|EXTRACTIONS| PANEL
+    SIGNALS -->|SIGNALS| PANEL
     PANEL -->|PANEL| MODEL -->|PREDICTIONS| TRADE -->|TRADES, daily P&L| EVAL
 ```
 
 The whole run is [`src/newsalpha/pipeline.py`](src/newsalpha/pipeline.py),
-about 60 lines, one call per stage. Read it first.
+one call per stage. Read it first.
 
 ## Stages
 
@@ -43,7 +48,8 @@ about 60 lines, one call per stage. Read it first.
 | 1 | Load | `data/sources` | vendor APIs → ARTICLES, MINUTE_BARS, QUOTES | Quotes are minute snapshots stamped at minute **end** |
 | 2 | Clean | `data/clean.py` | ARTICLES → ARTICLES | Bodies revised > 60 min after creation are unusable |
 | 3 | Align | `align.py`, `calendar.py` | ARTICLES → EVENTS | tau = first full minute after `created_at`; outside the session → next open |
-| 4 | Extract | `extraction/` | ARTICLES → EXTRACTIONS | The LLM reads numbers; code computes surprises; cached by text hash |
+| 4 | Extract | `extraction/` | ARTICLES → EXTRACTIONS | The LLM reads numbers; code computes surprises; cached by text + context hash |
+| 4b | Signals | `signals/` | ARTICLES, EXTRACTIONS → SIGNALS | Retrieval uses only the firm's news strictly before the article |
 | 5 | Features | `features/panel.py` | EVENTS × delays × horizons → PANEL | Features use data ≤ entry time only |
 | 6 | Predict | `models/walkforward.py` | PANEL → PREDICTIONS | Monthly walk-forward; train labels never overlap test; gap fitted per fold |
 | 7 | Trade + evaluate | `trading/`, `evaluation/` | PREDICTIONS → TRADES → report | Edge = forecast − cost; trade only if edge > κ·σ̂; profit metrics first |
@@ -66,9 +72,19 @@ src/newsalpha/
   extraction/
     schema.py            RawExtraction (what the LLM fills) + finalize (surprises in code)
     rules.py             regex baseline, also the "simple rule" benchmark
-    dictionary.py        Loughran-McDonald tone
-    llm.py               any OpenAI-compatible endpoint (vLLM or API teacher)
-    prompts/event_v1.md
+    dictionary.py        Loughran-McDonald tone (T0)
+    finbert.py           ProsusAI/finbert, batched (T1)
+    llm.py               any OpenAI-compatible endpoint: vLLM, API teacher, LoRA student (T3/T6)
+    probe.py             one-letter answer read from token probabilities (T4 confidence)
+    prompts/             event_v1.md, event_v1_rag.md (adds prior news + novelty_llm)
+  signals/
+    embed.py             hashing (offline) / sentence-transformers / embedding endpoint
+    novelty.py           time-safe retrieval of prior news -> novelty features + RAG context (T5)
+    disagreement.py      dispersion of scores across methods (T4)
+  distill/
+    dataset.py           training-period sample -> teacher labels -> chat JSONL (T6)
+    train_lora.py        LoRA fine-tuning, answer-only loss
+    evaluate.py          teacher vs student agreement per field
   features/
     panel.py             event x delay x horizon rows, features and labels
     gap.py               per-delay reaction gap, fitted on train folds only
@@ -96,7 +112,7 @@ docs/ARCHITECTURE.md     contracts, timing rules, extension points
 
 ```bash
 uv venv && source .venv/bin/activate
-uv pip install -e ".[dev]"
+uv pip install -e ".[dev]"            # add ",ml" for FinBERT, embeddings, LoRA
 pytest                                        # includes the no-look-ahead tests
 newsalpha run --config configs/synthetic.yaml # full pipeline, no keys needed
 cat data/runs/synthetic_demo_*/report.md
@@ -104,6 +120,28 @@ cat data/runs/synthetic_demo_*/report.md
 
 The synthetic world plants a known underreaction, so its numbers are large by
 construction. They show the pipeline works, not that the strategy does.
+
+## Signal-quality filters and distillation (B-tier)
+
+| ID | What | Runs where | How to turn it on |
+|---|---|---|---|
+| T1 | FinBERT tone | CPU or GPU | `extraction.method: finbert`, or add to `signals.compare` |
+| T4 | Cross-model disagreement | wherever the compared models run | list methods under `signals.compare` |
+| T4 | Token-probability confidence | any endpoint with `logprobs` (vLLM) | `method: probe` with `model` and `base_url` |
+| T5 | Novelty vs. the firm's prior 90 days | CPU (hashing, MiniLM) or GPU endpoint | `signals.novelty: true` |
+| T5 | RAG prompt: prior news shown to the LLM | GPU (vLLM) | `extraction.rag: true` |
+| T6 | Distilled student | GPU for training | see below |
+
+Distillation on the GPU server:
+
+```bash
+newsalpha distill-data --config configs/alpaca_llm.yaml      # teacher labels, training period only
+python -m newsalpha.distill.train_lora --base <student base model> \
+    --data /data/230P/distill --out adapters/student_v1
+vllm serve <student base model> --enable-lora --lora-modules student=adapters/student_v1
+# set extraction.model: student, then:
+newsalpha distill-eval --config configs/alpaca_llm.yaml      # field agreement on the val split
+```
 
 ## Real data
 
