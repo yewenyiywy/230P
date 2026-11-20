@@ -34,10 +34,14 @@ packages = ["src/newsalpha"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM"]
 ignore = ["E501"]  # the formatter owns line length; long strings stay readable
+
+[tool.ruff.lint.isort]
+known-first-party = ["newsalpha"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
