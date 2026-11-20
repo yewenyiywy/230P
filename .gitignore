@@ -8,8 +8,8 @@ __pycache__/
 dist/
 build/
 # data and results never go to git (licences; they live on Drive)
-data/
-runs/
+/data/
+/runs/
 *.parquet
 # secrets
 .env
