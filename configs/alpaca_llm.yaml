@@ -18,6 +18,25 @@ extraction:
   base_url: http://localhost:8000/v1
   prompt_version: event_v1
   model_cutoff: "2025-01-01"           # replace with the served model's real cutoff
+signals:
+  novelty: true
+  embedder: sentence_transformers
+  embed_model: sentence-transformers/all-MiniLM-L6-v2
+  compare:                             # T4: cross-model disagreement
+    - method: finbert
+    - method: probe
+      model: meta-llama/Llama-3.1-8B-Instruct
+      base_url: http://localhost:8002/v1
+    - method: probe
+      model: mistralai/Mistral-7B-Instruct-v0.3
+      base_url: http://localhost:8003/v1
+distill:                               # T6: teacher labels for the LoRA student
+  teacher:
+    method: llm
+    model: <API teacher model name>
+    base_url: <provider OpenAI-compatible URL>
+  n_samples: 4000
+  out_dir: /data/230P/distill
 model:
   kind: lgbm
 trading:

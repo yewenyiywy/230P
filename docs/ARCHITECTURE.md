@@ -21,6 +21,7 @@ Three rules shape everything:
 | QUOTES | (symbol, ts) | `data.sources.*` | last NBBO of each minute, `ts` = minute **end** |
 | EVENTS | event_id | `align.build_events` | `tau`, `session_date`, `overnight`, `body_usable` |
 | EXTRACTIONS | (article_id, method) | `extraction.base.run_extractor` | event type, direction, surprises computed in code |
+| SIGNALS | event_id | `pipeline.run_extraction` (stage 4b) | novelty, prior-news counts, cross-model disagreement |
 | PANEL | (event_id, delay_min, horizon) | `features.panel.build_panel` | ids + labels + features; see below |
 | PREDICTIONS | same as PANEL | `models.walkforward.predict_oos` | adds `pred`, `sigma_hat`, `gap`, `split` |
 | TRADES | same as PANEL | `trading.backtest.backtest` | side, notional, gross / net return, P&L |
@@ -40,6 +41,26 @@ target = log mid(exit)/mid(entry) − same for the hedge ETF
 
 Daily statistics (volatility, ADV, momentum, spreads) are rolling windows
 shifted by one session, so they only use completed prior sessions.
+
+News retrieval (`signals/novelty.py`) is time-safe by the same rule: for an
+article at time t it searches the same symbol's articles in [t − 90 days, t),
+strictly before t. The RAG prompt only ever sees that set.
+`tests/test_signals.py` adds a later article and checks no earlier feature or
+context changes.
+
+## Stage 4b: signals and the RAG loop
+
+```
+articles ──► novelty (embed, retrieve prior news) ──► novelty features ─┐
+                    │                                                   ├─► SIGNALS ─► PANEL
+                    └── RAG context ──► main extractor ──► EXTRACTIONS ─┤
+                                       compare extractors ──────────────┘ (disagreement)
+```
+
+Every extraction method writes the same schema, so disagreement is just the
+dispersion of `direction × confidence` across methods. The `probe` method
+turns token probabilities into an inner confidence, which is more
+informative than a confidence the model states in words.
 
 ## The reaction gap
 
@@ -71,7 +92,9 @@ bid, short the reverse. Variants: long-short hedged, long-only hedged, long-only
 | To add | Implement | Register in |
 |---|---|---|
 | a data vendor | `articles()`, `minute_bars()`, `quotes()` returning the contracts | `data/sources/__init__.py` |
-| a text method | `extract_one(headline, summary, body) -> RawExtraction` with `name`, `version` | `extraction/__init__.py` |
+| a text method | `extract_one(ArticleText) -> RawExtraction` (optionally `extract_batch`) with `name`, `version` | `extraction/__init__.py` |
+| an embedder | `embed(texts) -> unit vectors` | `signals/embed.py:get_embedder` |
+| a signal feature | a column keyed by `event_id` from stage 4b | `pipeline.run_extraction` |
 | a return model | `fit(X, y)`, `predict(X)` | `models/base.py:make_model` |
 | a feature | a column in `build_panel` computed from data ≤ entry | covered automatically by the leakage test |
 | a cost component | a function in `trading/costs.py` | `total_cost` and `realise` |

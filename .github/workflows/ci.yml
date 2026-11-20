@@ -33,3 +33,18 @@ jobs:
         with:
           name: synthetic-report
           path: runs/*/report.*
+
+  # FinBERT / distillation code paths with real torch + transformers + peft (CPU).
+  # The LoRA test trains a tiny model built inside the test: no model downloads.
+  ml:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Install (CPU torch)
+        run: |
+          uv venv --python 3.12
+          uv pip install torch --index-url https://download.pytorch.org/whl/cpu
+          uv pip install -e ".[dev,ml]"
+      - name: Model-path tests
+        run: uv run pytest tests/test_distill.py tests/test_signals.py -p no:warnings

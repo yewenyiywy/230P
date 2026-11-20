@@ -49,12 +49,36 @@ class AlignConfig(BaseModel):
 
 
 class ExtractionConfig(BaseModel):
-    method: Literal["rules", "dictionary", "llm"] = "rules"
-    model: str = ""  # e.g. a vLLM-served model name
+    method: Literal["rules", "dictionary", "finbert", "llm", "probe"] = "rules"
+    model: str = ""  # served model name (llm/probe) or HF model id (finbert)
     base_url: str = "http://localhost:8000/v1"  # OpenAI-compatible endpoint
     prompt_version: str = "event_v1"
     temperature: float = 0.0
     model_cutoff: str | None = None  # LLM knowledge cutoff, ISO date; required for real runs
+    rag: bool = False  # llm only: add the firm's prior news (time-safe) to the prompt
+    rag_k: int = 5  # prior articles shown in the prompt
+    batch_size: int = 32  # finbert
+
+
+class SignalsConfig(BaseModel):
+    """Stage 4b: signal-quality features beyond the main extraction (plan B-tier filters)."""
+
+    novelty: bool = True  # T5: similarity to the firm's prior news
+    novelty_days: int = 90
+    embedder: Literal["hashing", "sentence_transformers", "endpoint"] = "hashing"
+    embed_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    embed_base_url: str = "http://localhost:8001/v1"  # OpenAI-compatible /embeddings
+    compare: list[ExtractionConfig] = Field(default_factory=list)  # T4: extra methods to disagree
+
+
+class DistillConfig(BaseModel):
+    """T6: teacher labels for the LoRA student. The teacher is usually an API model."""
+
+    teacher: ExtractionConfig = Field(default_factory=lambda: ExtractionConfig(method="llm"))
+    n_samples: int = 4000
+    val_frac: float = 0.15
+    out_dir: str = "distill"
+    seed: int = 0
 
 
 class ModelConfig(BaseModel):
@@ -91,6 +115,8 @@ class RunConfig(BaseModel):
     data: DataConfig = Field(default_factory=DataConfig)
     align: AlignConfig = Field(default_factory=AlignConfig)
     extraction: ExtractionConfig = Field(default_factory=ExtractionConfig)
+    signals: SignalsConfig = Field(default_factory=SignalsConfig)
+    distill: DistillConfig = Field(default_factory=DistillConfig)
     model: ModelConfig = Field(default_factory=ModelConfig)
     trading: TradingConfig = Field(default_factory=TradingConfig)
     eval: EvalConfig = Field(default_factory=EvalConfig)

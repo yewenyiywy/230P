@@ -13,6 +13,11 @@ align:
   horizons: [close_t0, t1]
 extraction:
   method: rules
+signals:
+  novelty: true            # T5: similarity to the firm's prior 90 days of news
+  embedder: hashing        # offline; use sentence_transformers or endpoint on the GPU server
+  compare:                 # T4: disagreement between the main method and these
+    - method: dictionary
 model:
   kind: lgbm
 trading:

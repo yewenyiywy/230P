@@ -4,6 +4,7 @@
     2 clean     drop duplicates, flag revised bodies              (data.clean)
     3 align     ARTICLES -> EVENTS with event minute tau          (align)
     4 extract   ARTICLES -> EXTRACTIONS (cached)                  (extraction)
+    4b signals  novelty vs prior news, cross-model disagreement   (signals)
     5 panel     EVENTS x delays x horizons -> PANEL               (features.panel)
     6 predict   walk-forward -> PREDICTIONS                       (models.walkforward)
     7 evaluate  choose on validation, score test -> report        (trading + evaluation)
@@ -30,6 +31,9 @@ from newsalpha.extraction import get_extractor
 from newsalpha.extraction.base import run_extractor
 from newsalpha.features.panel import build_panel
 from newsalpha.models.walkforward import predict_oos
+from newsalpha.signals.disagreement import disagreement_features
+from newsalpha.signals.embed import get_embedder
+from newsalpha.signals.novelty import novelty_features
 
 log = logging.getLogger(__name__)
 
@@ -65,12 +69,9 @@ def load_market(src, events: pd.DataFrame, cfg: RunConfig):
     return pd.concat(bars), pd.concat(quotes).drop_duplicates(["symbol", "ts"]), daily
 
 
-def run_extraction(cfg: RunConfig):
-    """Stages 1-4 only. On the GPU server this warms the extraction cache."""
+def load_articles(cfg: RunConfig, store: DataStore):
+    """Stages 1-3: load, clean, align."""
     h = config_hash(cfg)
-    store = DataStore(cfg.data.root)
-
-    # 1-2 load and clean
     src = get_source(cfg.data)
     articles = clean_articles(
         src.articles(),
@@ -79,23 +80,53 @@ def run_extraction(cfg: RunConfig):
         max_rev_min=cfg.align.max_revision_minutes,
     )
     store.write(articles.drop(columns=["true_mu"], errors="ignore"), "interim", f"articles_{h}")
-
-    # 3 align
     events = build_events(articles)
     store.write(events, "interim", f"events_{h}")
+    return src, articles, events
 
-    # 4 extract
-    extractions = run_extractor(get_extractor(cfg.extraction), articles, store)
-    return src, store, events, extractions
+
+def novelty_and_context(articles: pd.DataFrame, cfg: RunConfig):
+    """T5 retrieval. Needed before extraction when the LLM prompt uses RAG context."""
+    if not (cfg.signals.novelty or cfg.extraction.rag):
+        return None, None
+    return novelty_features(
+        articles, get_embedder(cfg.signals), cfg.signals.novelty_days, cfg.extraction.rag_k
+    )
+
+
+def run_extraction(cfg: RunConfig):
+    """Stages 1-4b. On the GPU server this warms every extraction cache."""
+    store = DataStore(cfg.data.root)
+
+    # 1-3 load, clean, align
+    src, articles, events = load_articles(cfg, store)
+
+    # 4 extract (with the firm's prior news in the prompt if rag is on)
+    novelty, contexts = novelty_and_context(articles, cfg)
+    extractions = run_extractor(
+        get_extractor(cfg.extraction), articles, store, contexts if cfg.extraction.rag else None
+    )
+
+    # 4b signals: novelty (T5) and disagreement across methods (T4)
+    signals = events[["event_id", "article_id"]].copy()
+    if cfg.signals.novelty and novelty is not None:
+        signals = signals.merge(novelty, on="event_id", how="left")
+    if cfg.signals.compare:
+        others = [run_extractor(get_extractor(c), articles, store) for c in cfg.signals.compare]
+        signals = signals.merge(
+            disagreement_features([extractions, *others]), on="article_id", how="left"
+        )
+    signals = signals.drop(columns="article_id")
+    return src, store, events, extractions, signals
 
 
 def run(cfg: RunConfig, out_root: str | Path | None = None) -> dict:
     h = config_hash(cfg)
-    src, store, events, extractions = run_extraction(cfg)
+    src, store, events, extractions, signals = run_extraction(cfg)
 
     # 5 panel
     bars, quotes, daily = load_market(src, events, cfg)
-    panel = build_panel(events, extractions, bars, quotes, cfg, daily_bars=daily)
+    panel = build_panel(events, extractions, bars, quotes, cfg, daily_bars=daily, signals=signals)
     store.write(panel, "processed", f"panel_{h}")
     log.info("panel: %d rows, %d events", len(panel), panel["event_id"].nunique())
 
@@ -110,3 +141,39 @@ def run(cfg: RunConfig, out_root: str | Path | None = None) -> dict:
     write_report(report, run_dir)
     report["run_dir"] = str(run_dir)
     return report
+
+
+# ---------------------------------------------------------------- T6 distillation
+def distill_data(cfg: RunConfig) -> dict:
+    """Teacher-label a stratified sample of TRAINING-period articles; write train/val JSONL."""
+    from newsalpha.distill.dataset import sample_for_teacher, teacher_records, write_splits
+
+    store = DataStore(cfg.data.root)
+    _, articles, _ = load_articles(cfg, store)
+    teacher_cfg = cfg.distill.teacher
+    contexts = None
+    if teacher_cfg.rag:
+        _, contexts = novelty_and_context(
+            articles, cfg.model_copy(update={"extraction": teacher_cfg})
+        )
+    sample = sample_for_teacher(
+        articles, cfg.distill.n_samples, before=cfg.eval.test_start, seed=cfg.distill.seed
+    )
+    records = teacher_records(sample, get_extractor(teacher_cfg), teacher_cfg, contexts)
+    return write_splits(records, cfg.distill.out_dir, cfg.distill.val_frac)
+
+
+def distill_eval(cfg: RunConfig) -> pd.DataFrame:
+    """Field agreement of the student (cfg.extraction) with the teacher on the validation split."""
+    from newsalpha.distill.dataset import read_jsonl
+    from newsalpha.distill.evaluate import agreement
+
+    store = DataStore(cfg.data.root)
+    _, articles, _ = load_articles(cfg, store)
+    val_ids = {r["article_id"] for r in read_jsonl(Path(cfg.distill.out_dir) / "val.jsonl")}
+    val = articles[articles["article_id"].isin(val_ids)]
+    teacher = run_extractor(get_extractor(cfg.distill.teacher), val, store)
+    student = run_extractor(get_extractor(cfg.extraction), val, store)
+    table = agreement(teacher, student)
+    table.to_csv(Path(cfg.distill.out_dir) / "agreement.csv", index=False)
+    return table

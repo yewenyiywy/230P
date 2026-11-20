@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 
+from newsalpha.extraction.base import ArticleText
 from newsalpha.extraction.schema import EventType, RawExtraction
 
 NUM = r"\$?(-?[\d,]*\.?\d+)([MB]\b)?"
@@ -45,8 +46,8 @@ class RulesExtractor:
     name = "rules"
     version = "v1"
 
-    def extract_one(self, headline: str, summary: str = "", body: str = "") -> RawExtraction:
-        text = headline
+    def extract_one(self, item: ArticleText) -> RawExtraction:
+        text = item.headline
         if m := EPS.search(text):
             s = SALES.search(text)
             return RawExtraction(
