@@ -1,0 +1,24 @@
+# Runs end-to-end with no API keys. The synthetic world plants a known
+# underreaction, so this config is also the pipeline's integration test.
+name: synthetic_demo
+data:
+  source: synthetic
+  root: data
+  benchmark: SPY
+  synthetic_symbols: 25
+  synthetic_sessions: 120
+  synthetic_seed: 7
+align:
+  delays_min: [1, 5, 15, 30, 60]
+  horizons: [close_t0, t1]
+extraction:
+  method: rules
+model:
+  kind: lgbm
+trading:
+  variant: long_short_hedged
+  kappa: 0.1
+eval:
+  train_start: "2024-01-01"
+  test_start: "2024-05-01"
+  min_train_events: 300

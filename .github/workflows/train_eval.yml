@@ -1,0 +1,31 @@
+# Manual: full pipeline (walk-forward, backtest, report) on the GPU server.
+# Uses the extraction cache written by extract.yml. Private repo only.
+name: train_eval
+on:
+  workflow_dispatch:
+    inputs:
+      config:
+        description: "Config file, e.g. configs/alpaca_llm.yaml"
+        required: true
+permissions:
+  contents: read
+jobs:
+  train_eval:
+    if: ${{ github.event.repository.private }}
+    runs-on: [self-hosted, gpu]
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install
+        run: |
+          uv venv --python 3.12
+          uv pip install -e ".[databento]"
+      - name: Run
+        run: |
+          set -a; source "$HOME/.newsalpha.env"; set +a
+          uv run newsalpha run --config "${{ inputs.config }}" --out runs
+          cat runs/*/report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: report
+          path: runs/*/report.*

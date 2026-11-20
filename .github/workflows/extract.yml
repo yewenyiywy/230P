@@ -1,0 +1,27 @@
+# Manual: run LLM extraction (stages 1-4) on the GPU server for one config.
+# Refuses to run while the repo is public: a self-hosted runner on a public
+# repo can be reached by fork pull requests.
+name: extract
+on:
+  workflow_dispatch:
+    inputs:
+      config:
+        description: "Config file, e.g. configs/alpaca_llm.yaml"
+        required: true
+permissions:
+  contents: read
+jobs:
+  extract:
+    if: ${{ github.event.repository.private }}
+    runs-on: [self-hosted, gpu]
+    timeout-minutes: 720
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install
+        run: |
+          uv venv --python 3.12
+          uv pip install -e ".[databento]"
+      - name: Extract
+        run: |
+          set -a; source "$HOME/.newsalpha.env"; set +a   # keys live on the server only
+          uv run newsalpha extract --config "${{ inputs.config }}"

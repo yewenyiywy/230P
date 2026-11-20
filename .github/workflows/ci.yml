@@ -1,0 +1,35 @@
+# Every push and pull request: lint, types, tests (incl. no-look-ahead tests),
+# and the full pipeline on the synthetic world. GitHub-hosted runners only.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Install
+        run: |
+          uv venv --python 3.12
+          uv pip install -e ".[dev]"
+      - name: Lint and format
+        run: |
+          uv run ruff check src tests
+          uv run ruff format --check src tests
+      - name: Type check
+        run: uv run mypy src
+      - name: Tests
+        run: uv run pytest
+      - name: End-to-end on synthetic data
+        run: |
+          uv run newsalpha run --config configs/synthetic.yaml --out runs
+          cat runs/*/report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-report
+          path: runs/*/report.*

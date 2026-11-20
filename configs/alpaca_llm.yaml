@@ -1,0 +1,29 @@
+# Real-data template. Needs ALPACA_API_KEY_ID / ALPACA_API_SECRET_KEY and a vLLM
+# server on the GPU box. Set model_cutoff to the served model's knowledge cutoff
+# and keep test_start after it, or the report will warn about memorisation.
+name: alpaca_llm_v1
+data:
+  source: alpaca
+  root: /data/230P          # rclone-synced copy of the Drive 230P folder
+  symbols: []               # empty = every symbol Benzinga tags
+  start: "2016-01-01"
+  end: "2026-11-01"
+  benchmark: SPY
+align:
+  delays_min: [1, 5, 15, 30, 60]
+  horizons: [close_t0, t1, t3, t5]
+extraction:
+  method: llm
+  model: Qwen/Qwen3-30B-A3B-Instruct   # example; any OpenAI-compatible served model
+  base_url: http://localhost:8000/v1
+  prompt_version: event_v1
+  model_cutoff: "2025-01-01"           # replace with the served model's real cutoff
+model:
+  kind: lgbm
+trading:
+  variant: long_short_hedged
+  kappa: 0.5
+eval:
+  train_start: "2016-01-01"
+  test_start: "2025-02-01"
+  min_train_events: 2000
